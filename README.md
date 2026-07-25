@@ -22,7 +22,7 @@ Title #1 is **Breakout 747** — the brick-and-paddle classic, in your terminal.
 
 ```
 /plugin marketplace add The747Lab/747-terminal-games
-/plugin install 747-terminal-games
+/plugin install 747-terminal-games@747-terminal-games
 ```
 
 That's it. The next time Claude thinks, you'll be asked once whether you want to play — `y` to try it, `a` to auto-open every time, `o` to never ask.
