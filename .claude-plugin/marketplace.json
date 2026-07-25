@@ -1,7 +1,9 @@
 {
   "name": "747-terminal-games",
+  "description": "Terminal games from The 747 Lab that play in a pane while Claude Code thinks, and get out of the way the moment it replies.",
   "owner": {
-    "name": "The 747 Lab"
+    "name": "The 747 Lab",
+    "url": "https://github.com/The747Lab"
   },
   "plugins": [
     {

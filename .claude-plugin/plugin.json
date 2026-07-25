@@ -6,5 +6,7 @@
     "name": "The 747 Lab"
   },
   "license": "MIT",
+  "homepage": "https://github.com/The747Lab/747-terminal-games",
+  "repository": "https://github.com/The747Lab/747-terminal-games",
   "keywords": ["game", "terminal", "tui", "breakout", "claude-code", "idle", "fun"]
 }

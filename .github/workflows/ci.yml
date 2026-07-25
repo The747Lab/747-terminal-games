@@ -55,3 +55,18 @@ jobs:
         run: |
           ! grep -rnE "urllib|requests|socket|http://|https://[a-z]" games/ hooks/ --include="*.py" --include="*.sh" \
             || { echo "network reference found in game/hook code"; exit 1; }
+
+  manifests:
+    # The same validator Anthropic's community-marketplace review pipeline runs on
+    # every submission. Strict mode so warnings fail here, not there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Official plugin validator (strict)
+        run: |
+          claude plugin validate --strict .claude-plugin/plugin.json
+          claude plugin validate --strict .
