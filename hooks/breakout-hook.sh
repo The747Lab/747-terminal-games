@@ -54,7 +54,7 @@ open_window() {  # no tmux: open the game in its own macOS Terminal/iTerm window
   [ "$(uname)" = "Darwin" ] || return 1
   game_running && return 0
   local cmd esc
-  cmd="clear; BREAKOUT747_STATE=$(printf '%q' "$STATE_DIR") python3 $(printf '%q' "$GAME") $1 --session '${SID:-free}'; exit"
+  cmd="clear; BREAKOUT747_STATE=$(printf '%q' "$STATE_DIR") python3 $(printf '%q' "$GAME") $1 --session $(printf '%q' "${SID:-free}"); exit"
   esc=$(as_escape "$cmd")
   if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
     osascript -e 'tell application "iTerm"' \
