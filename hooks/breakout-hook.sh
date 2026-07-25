@@ -42,6 +42,36 @@ open_pane() {  # $1 = extra flags for the game
   [ -n "$np" ] && tmux select-pane -t "$np" -T BREAKOUT747 2>/dev/null
 }
 
+game_running() {  # duplicate guard for the windowed fallback (one game per session key)
+  pgrep -f "breakout\.py.*--session ${SID:-free}" >/dev/null 2>&1
+}
+
+as_escape() {  # make a shell command safe inside an AppleScript double-quoted string
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+open_window() {  # no tmux: open the game in its own macOS Terminal/iTerm window
+  [ "$(uname)" = "Darwin" ] || return 1
+  game_running && return 0
+  local cmd esc
+  cmd="clear; BREAKOUT747_STATE=$(printf '%q' "$STATE_DIR") python3 $(printf '%q' "$GAME") $1 --session '${SID:-free}'; exit"
+  esc=$(as_escape "$cmd")
+  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+    osascript -e 'tell application "iTerm"' \
+              -e 'create window with default profile' \
+              -e "tell current session of current window to write text \"$esc\"" \
+              -e 'activate' -e 'end tell' >/dev/null 2>&1
+  else
+    osascript -e 'tell application "Terminal"' \
+              -e "do script \"$esc\"" \
+              -e 'activate' -e 'end tell' >/dev/null 2>&1
+  fi
+}
+
+open_game() {  # tmux pane preferred; separate window as the macOS fallback
+  open_pane "$1" || open_window "$1"
+}
+
 case "$EV" in
   idle) echo idle > "$STATE_FILE"; exit 0 ;;
   end)
@@ -51,9 +81,14 @@ case "$EV" in
     rm -f "$STATE_DIR/declined-$SID" 2>/dev/null
     exit 0 ;;
   toggle)
-    tgt="${TMUX_PANE:+-t $TMUX_PANE}"
-    ex=$(tmux list-panes $tgt -F '#{pane_id} #{pane_title}' 2>/dev/null | awk '$2=="BREAKOUT747"{print $1; exit}')
-    if [ -n "$ex" ]; then tmux kill-pane -t "$ex"; else open_pane --free; fi
+    if [ -n "${TMUX:-}" ]; then
+      tgt="${TMUX_PANE:+-t $TMUX_PANE}"
+      ex=$(tmux list-panes $tgt -F '#{pane_id} #{pane_title}' 2>/dev/null | awk '$2=="BREAKOUT747"{print $1; exit}')
+      if [ -n "$ex" ]; then tmux kill-pane -t "$ex"; else open_pane --free; fi
+    else
+      if game_running; then pkill -f "breakout\.py.*--session ${SID:-free}" 2>/dev/null
+      else open_window --free; fi
+    fi
     exit 0 ;;
   thinking)
     echo thinking > "$STATE_FILE"
@@ -70,5 +105,5 @@ MODE=$(cat "$STATE_DIR/mode" 2>/dev/null | tr -d '[:space:]'); [ -z "$MODE" ] &&
 [ -n "$SID" ] && [ -f "$STATE_DIR/declined-$SID" ] && exit 0
 FLAGS=""
 [ "$MODE" = "ask" ] && FLAGS="--ask"
-open_pane "$FLAGS"
+open_game "$FLAGS"
 exit 0
