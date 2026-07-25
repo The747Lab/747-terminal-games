@@ -272,7 +272,7 @@ def big_text(s):
     return [r[:-1] for r in rows], spans
 
 
-def welcome_flyby(scr):
+def welcome_flyby(scr, session=""):
     """First-run title flyby — a 7.47s three-act cinematic in the donut.c /
     ANSI-textmode lineage. You are the CAMERA: the letters of THE 747 LAB are
     giant monuments spaced out in z-depth along a flight path, and you fly POV
@@ -420,12 +420,16 @@ def welcome_flyby(scr):
     scr.nodelay(True)
     t0 = time.time()
     z_prev = 0.0
+    frame_n = 0
     while True:
         now = time.time() - t0
         if scr.getch() != -1:                     # any key -> INSTANT skip, every frame
             break
         if now >= FLYBY_T:
             break
+        frame_n += 1
+        if frame_n % 25 == 0 and read_state(session) == "end":
+            return                                # session over mid-intro -> exit now, not in 7s
 
         # ONE velocity spline for the whole flight — drift -> surge -> glide-to-rest
         # as a single breath. smootherstep has zero velocity AND accel at both
@@ -622,7 +626,7 @@ def main(stdscr, args):
     print("\033[?1003h", end="", flush=True)  # mouse motion tracking
 
     if args.ask:
-        welcome_flyby(stdscr)
+        welcome_flyby(stdscr, args.session)
         if not ask_screen(stdscr, args.session):
             return
 
