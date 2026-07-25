@@ -36,8 +36,9 @@ That's it. The next time Claude thinks, you'll be asked once whether you want to
 
 ## Requirements
 
-- **tmux** (recommended) — the game opens as a split pane right in your tmux window.
-- **No tmux? On macOS it just works** — the game opens in its own Terminal/iTerm window instead, and still pauses/resumes with Claude. On Linux/Windows without tmux, auto-open is off, but the games run standalone: `python3 games/breakout.py --free`.
+- **tmux** (recommended) — the game opens as a split pane right in your window while Claude thinks, and **disappears the moment Claude replies** — your terminal goes back to exactly how it was, no tab to close. Your run is kept alive in the background and rejoins, mid-game, on your next prompt.
+- **iTerm2 without tmux** — the game splits your current iTerm window natively (same in-place feel).
+- **Elsewhere** — auto-open needs tmux. The games still run standalone any time: `python3 games/breakout.py --free`.
 - **Python 3** with `curses` (standard on macOS and Linux).
 
 ## Modes

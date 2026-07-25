@@ -48,9 +48,10 @@ def remove_state(session):
         pass
 
 
-def set_pane_title():
-    # OSC 2 sets the tmux pane title so the launcher can detect a live game
-    sys.stdout.write("\033]2;BREAKOUT747\033\\")
+def set_pane_title(session=""):
+    # OSC 2 sets the tmux pane title so the launcher can detect a live game.
+    # Session-keyed so the ghost-pane banish/rejoin can find THIS session's run.
+    sys.stdout.write(f"\033]2;BREAKOUT747-{session or 'free'}\033\\")
     sys.stdout.flush()
 
 
@@ -671,7 +672,7 @@ if __name__ == "__main__":
     p.add_argument("--session", default="")
     args = p.parse_args()
     os.makedirs(STATE_DIR, exist_ok=True)
-    set_pane_title()
+    set_pane_title(args.session)
     try:
         curses.wrapper(main, args)
     finally:

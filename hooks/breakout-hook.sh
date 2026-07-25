@@ -29,17 +29,25 @@ SID="${SID//[^A-Za-z0-9-]/}"
 
 STATE_FILE="$STATE_DIR/state${SID:+-$SID}"
 
-open_pane() {  # $1 = extra flags for the game
+open_pane() {  # $1 = extra flags for the game. Ghost-pane aware: a banished run rejoins.
   [ -z "${TMUX:-}" ] && return 1
   local tgt="${TMUX_PANE:+-t $TMUX_PANE}"
-  # already open in this window?
-  if tmux list-panes $tgt -F '#{pane_title}' 2>/dev/null | grep -q '^BREAKOUT747$'; then
+  local title="BREAKOUT747-${SID:-free}"
+  # already visible in this window?
+  if tmux list-panes $tgt -F '#{pane_title}' 2>/dev/null | grep -qx "$title"; then
     return 0
+  fi
+  # banished run waiting in the hidden window? rejoin it — same process, same score.
+  local hp
+  hp=$(tmux list-panes -a -F '#{pane_id} #{pane_title}' 2>/dev/null \
+       | awk -v t="$title" '$2==t{print $1; exit}')
+  if [ -n "$hp" ]; then
+    tmux join-pane -d -v -l 16 -s "$hp" $tgt 2>/dev/null && return 0
   fi
   local np
   np=$(BREAKOUT747_STATE="$STATE_DIR" tmux split-window -d -P -F '#{pane_id}' -v -l 16 $tgt \
     "exec env BREAKOUT747_STATE='$STATE_DIR' python3 '$GAME' $1 --session '$SID'" 2>/dev/null) || return 1
-  [ -n "$np" ] && tmux select-pane -t "$np" -T BREAKOUT747 2>/dev/null
+  [ -n "$np" ] && tmux select-pane -t "$np" -T "$title" 2>/dev/null
 }
 
 game_running() {  # duplicate guard for the windowed fallback (one game per session key)
@@ -50,30 +58,43 @@ as_escape() {  # make a shell command safe inside an AppleScript double-quoted s
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-open_window() {  # no tmux: open the game in its own macOS Terminal/iTerm window
-  [ "$(uname)" = "Darwin" ] || return 1
+open_iterm_split() {  # no tmux, but iTerm2: split the CURRENT window natively — same
+  # in-place feel as a tmux pane. (A separate window would defeat the whole point:
+  # the game replaces the wait IN PLACE, or it doesn't open at all.)
+  [ "${TERM_PROGRAM:-}" = "iTerm.app" ] || return 1
   game_running && return 0
   local cmd esc
   cmd="clear; BREAKOUT747_STATE=$(printf '%q' "$STATE_DIR") python3 $(printf '%q' "$GAME") $1 --session $(printf '%q' "${SID:-free}"); exit"
   esc=$(as_escape "$cmd")
-  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
-    osascript -e 'tell application "iTerm"' \
-              -e 'create window with default profile' \
-              -e "tell current session of current window to write text \"$esc\"" \
-              -e 'activate' -e 'end tell' >/dev/null 2>&1
-  else
-    osascript -e 'tell application "Terminal"' \
-              -e "do script \"$esc\"" \
-              -e 'activate' -e 'end tell' >/dev/null 2>&1
-  fi
+  osascript -e 'tell application "iTerm"' \
+            -e 'tell current session of current window' \
+            -e 'set newSession to (split horizontally with default profile)' \
+            -e 'end tell' \
+            -e "tell newSession to write text \"$esc\"" \
+            -e 'end tell' >/dev/null 2>&1
 }
 
-open_game() {  # tmux pane preferred; separate window as the macOS fallback
-  open_pane "$1" || open_window "$1"
+open_game() {  # in-place only: tmux pane, or iTerm2 native split. Never a new window.
+  open_pane "$1" || open_iterm_split "$1"
+}
+
+bg_win() {  # the hidden window holding this session's banished game pane, if any
+  tmux list-panes -a -F '#{window_id} #{pane_title}' 2>/dev/null \
+    | awk -v t="BREAKOUT747-${SID:-free}" '$2==t{print $1; exit}'
 }
 
 case "$EV" in
-  idle) echo idle > "$STATE_FILE"; exit 0 ;;
+  idle)
+    echo idle > "$STATE_FILE"
+    # GHOST PANE: the game VANISHES the instant Claude replies — terminal back to
+    # normal, run kept alive (paused) in a hidden window; rejoins on next prompt.
+    if [ -n "${TMUX:-}" ]; then
+      tgt="${TMUX_PANE:+-t $TMUX_PANE}"
+      p=$(tmux list-panes $tgt -F '#{pane_id} #{pane_title}' 2>/dev/null \
+          | awk -v t="BREAKOUT747-${SID:-free}" '$2==t{print $1; exit}')
+      [ -n "$p" ] && tmux break-pane -d -s "$p" -n B747BG 2>/dev/null
+    fi
+    exit 0 ;;
   end)
     # Signal exit; the game deletes its own state file as it quits. Only remove
     # the declined marker here (no running game owns it).
@@ -83,11 +104,12 @@ case "$EV" in
   toggle)
     if [ -n "${TMUX:-}" ]; then
       tgt="${TMUX_PANE:+-t $TMUX_PANE}"
-      ex=$(tmux list-panes $tgt -F '#{pane_id} #{pane_title}' 2>/dev/null | awk '$2=="BREAKOUT747"{print $1; exit}')
+      ex=$(tmux list-panes $tgt -F '#{pane_id} #{pane_title}' 2>/dev/null \
+           | awk -v t="BREAKOUT747-${SID:-free}" '$2==t{print $1; exit}')
       if [ -n "$ex" ]; then tmux kill-pane -t "$ex"; else open_pane --free; fi
     else
       if game_running; then pkill -f "breakout\.py.*--session ${SID:-free}" 2>/dev/null
-      else open_window --free; fi
+      else open_iterm_split --free; fi
     fi
     exit 0 ;;
   thinking)
