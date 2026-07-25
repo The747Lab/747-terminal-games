@@ -1,6 +1,6 @@
 {
   "name": "747-terminal-games",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Play a game in your terminal while Claude thinks. Auto-pauses when Claude replies, resumes on your next prompt. Title #1: Breakout 747.",
   "author": {
     "name": "The 747 Lab"
