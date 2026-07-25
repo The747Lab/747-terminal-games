@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Byte-compile the games
+        run: python -m compileall -q games/
+
+      - name: Shell syntax
+        run: bash -n hooks/breakout-hook.sh
+
+      - name: Manifests are valid JSON
+        run: |
+          python -c "import json;json.load(open('.claude-plugin/plugin.json'))"
+          python -c "import json;json.load(open('.claude-plugin/marketplace.json'))"
+          python -c "import json;json.load(open('hooks/hooks.json'))"
+
+      - name: Plugin and marketplace versions agree
+        run: |
+          python - <<'PY'
+          import json, sys
+          p = json.load(open('.claude-plugin/plugin.json'))['version']
+          m = json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version']
+          print(f'plugin.json={p} marketplace.json={m}')
+          sys.exit(0 if p == m else 1)
+          PY
+
+      - name: Games run headless and exit cleanly
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+          for g in breakout astros; do
+            tmux new-session -d -s "t_$g" -x 100 -y 24 \
+              "BREAKOUT747_STATE=/tmp/ci-state python3 games/$g.py --free --session ci"
+            sleep 3
+            tmux list-panes -t "t_$g" >/dev/null || { echo "$g died on launch"; exit 1; }
+            tmux kill-session -t "t_$g"
+            echo "$g: launched and ran"
+          done
+
+      - name: No network calls in shipped code
+        run: |
+          ! grep -rnE "urllib|requests|socket|http://|https://[a-z]" games/ hooks/ --include="*.py" --include="*.sh" \
+            || { echo "network reference found in game/hook code"; exit 1; }
