@@ -1,0 +1,35 @@
+{
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/breakout-hook.sh\" thinking",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/breakout-hook.sh\" idle",
+          "timeout": 3
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/breakout-hook.sh\" end",
+          "timeout": 3
+        }
+      ]
+    }
+  ]
+}

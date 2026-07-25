@@ -1,0 +1,7 @@
+.747-terminal-games/
+__pycache__/
+*.pyc
+reveal.html
+reveal.body.html
+.playwright-mcp/
+*.png
