@@ -4,6 +4,8 @@
 
 When Claude Code is thinking, a little game appears in a pane beside your work. It **pauses the instant Claude replies** so you never miss the answer, and **resumes when you send your next prompt**. Close it any time. Zero setup beyond installing the plugin — the pause/resume is wired automatically.
 
+![First-run intro — a textmode fly-through](assets/747-intro.gif)
+
 Title #1 is **Breakout 747** — the brick-and-paddle classic, in your terminal.
 
 ```
