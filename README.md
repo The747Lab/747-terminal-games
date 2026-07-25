@@ -1,5 +1,7 @@
 # 747 Terminal Games
 
+[![CI](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml/badge.svg)](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) ![No dependencies](https://img.shields.io/badge/dependencies-none-black)
+
 **Play a game in your terminal while your AI codes.**
 
 When Claude Code is thinking, a little game appears in a pane beside your work. It **pauses the instant Claude replies** so you never miss the answer, and **resumes when you send your next prompt**. Close it any time. Zero setup beyond installing the plugin — the pause/resume is wired automatically.
