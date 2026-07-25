@@ -44,9 +44,17 @@ open_pane() {  # $1 = extra flags for the game. Ghost-pane aware: a banished run
   if [ -n "$hp" ]; then
     tmux join-pane -d -v -l 16 -s "$hp" $tgt 2>/dev/null && return 0
   fi
-  local np
-  np=$(BREAKOUT747_STATE="$STATE_DIR" tmux split-window -d -P -F '#{pane_id}' -v -l 16 $tgt \
-    "exec env BREAKOUT747_STATE='$STATE_DIR' python3 '$GAME' $1 --session '$SID'" 2>/dev/null) || return 1
+  # Size to the space we actually have: a fixed 16 rows makes tmux REFUSE the split
+  # in an already-divided window (common — grids, cockpits), and the game would
+  # silently never open. Take half, capped at 16, floored at 8; retry at tmux's
+  # own default if even that is refused.
+  local ph want np cmd
+  ph=$(tmux display-message -p $tgt '#{pane_height}' 2>/dev/null); [ -z "$ph" ] && ph=24
+  want=$(( ph / 2 )); [ "$want" -gt 16 ] && want=16; [ "$want" -lt 8 ] && want=8
+  cmd="exec env BREAKOUT747_STATE='$STATE_DIR' python3 '$GAME' $1 --session '$SID'"
+  np=$(BREAKOUT747_STATE="$STATE_DIR" tmux split-window -d -P -F '#{pane_id}' -v -l "$want" $tgt "$cmd" 2>/dev/null) \
+    || np=$(BREAKOUT747_STATE="$STATE_DIR" tmux split-window -d -P -F '#{pane_id}' -v $tgt "$cmd" 2>/dev/null) \
+    || return 1
   [ -n "$np" ] && tmux select-pane -t "$np" -T "$title" 2>/dev/null
 }
 
