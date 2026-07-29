@@ -1,12 +1,30 @@
 # 747 Terminal Games
 
-[![CI](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml/badge.svg)](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) ![No dependencies](https://img.shields.io/badge/dependencies-none-black)
-
 **Play a game in your terminal while your AI codes.**
+
+![JAYWALK — a recorded run: a bay filled, a log ridden, and two of the three lives spent getting there](assets/jaywalk.gif)
+
+[![CI](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml/badge.svg)](https://github.com/The747Lab/747-terminal-games/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE) ![No dependencies](https://img.shields.io/badge/dependencies-none-black)
 
 When Claude Code is thinking, a game appears in a pane beside your work. It **pauses the instant Claude replies** so you never miss the answer, and **resumes when you send your next prompt** — same run, same score. Close it any time. Zero setup beyond installing the plugin, and zero dependencies: Python 3 and `curses`, nothing else.
 
-![First-run intro — a textmode fly-through](assets/747-intro.gif)
+## Install — two lines, no shell script
+
+```
+/plugin marketplace add The747Lab/747-terminal-games
+/plugin install 747-terminal-games@747-terminal-games
+```
+
+That's it. Nothing to `curl`, nothing to pipe into a shell, no root, no network calls at
+runtime — CI greps the shipped code and fails the build if it so much as mentions a socket.
+MIT, and the dependency tree is empty.
+
+The next time Claude thinks, you'll be asked once whether you want to play — `y` to try it,
+`a` to auto-open every time, `o` to never ask. Say yes and the picker comes up: choose a
+title with `1`–`5` or the arrow keys. Your choice is remembered.
+
+One honest limitation up front: the auto-open needs **tmux** or **iTerm2**. Anywhere else the
+games still run standalone, you just lose the appearing and vanishing.
 
 ## The five titles
 
@@ -162,18 +180,8 @@ is not a lane you can stand in: you ride whatever floats past, or you don't get 
 sends you back to the kerb with the traffic running faster. Nobody has ever had to be told
 what to do in this one, which is exactly why it is here.
 
-![JAYWALK — a recorded run: a bay filled, a log ridden, and two of the three lives spent getting there](assets/jaywalk.gif)
-
-## Install (Claude Code plugin)
-
-```
-/plugin marketplace add The747Lab/747-terminal-games
-/plugin install 747-terminal-games@747-terminal-games
-```
-
-That's it. The next time Claude thinks, you'll be asked once whether you want to play —
-`y` to try it, `a` to auto-open every time, `o` to never ask. Say yes and the picker
-comes up: choose a title with `1`–`5` or the arrow keys. Your choice is remembered.
+The clip at the top of this page is one JAYWALK run: a bay filled, a log ridden, and two of
+the three lives spent getting there.
 
 ## Play
 
@@ -222,6 +230,13 @@ echo jetwash > ~/.747-terminal-games/game
 ```
 
 The slash commands ignore this file — they always open the title you named.
+
+## First run
+
+Before the picker comes up, a textmode fly-through: 7.47 seconds, and any key skips it
+instantly.
+
+![First-run intro — a textmode fly-through](assets/747-intro.gif)
 
 ## About
 

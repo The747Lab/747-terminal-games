@@ -5,8 +5,8 @@ Thanks for looking. This is a small project with a narrow scope, so a quick orie
 ## What this is
 
 A Claude Code plugin that opens a terminal game while the model is working and gets out of
-the way the moment it replies. Four titles so far — BREAK-IN, SKYRUN, JETWASH and
-ASTROS — all pure Python `curses`, all running on Python 3.9 through 3.13.
+the way the moment it replies. Five titles so far — BREAK-IN, SKYRUN, JETWASH,
+ASTROS and JAYWALK — all pure Python `curses`, all running on Python 3.9 through 3.13.
 
 ## Ground rules
 
