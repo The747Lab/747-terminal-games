@@ -80,7 +80,7 @@ jobs:
                   delattr(curses, attr)      # never DEFINED when start_color failed
 
           fail = []
-          for name in ('breakout', 'skyrun', 'jetwash', 'astros'):
+          for name in ('breakout', 'skyrun', 'jetwash', 'astros', 'jaywalk'):
               m = importlib.import_module(name)
               try:
                   p = m.Palette()
@@ -277,7 +277,7 @@ jobs:
             fi
             echo "ok   $g ${cols}x${rows} [$tag]: launched, survived, exited on 'end', state cleaned, stderr empty"
           }
-          for g in breakout skyrun jetwash astros; do
+          for g in breakout skyrun jetwash astros jaywalk; do
             run_case "$g" 100 24 full
             run_case "$g"  80  8 tiny
             run_case "$g"  40 10 thin
@@ -285,20 +285,20 @@ jobs:
           done
           exit $fail
 
-      - name: All four soak for 60 s side by side
+      - name: All titles soak for 60 s side by side
         # Long enough to cross the first wave / gate / chamber transition, where
         # a geometry bug that a 4-second smoke test cannot reach tends to live.
         run: |
           PY=$(command -v python)
           ST=/tmp/ci-soak; LOG=/tmp/ci-soaklog
           rm -rf "$ST" "$LOG"; mkdir -p "$ST" "$LOG"
-          for g in breakout skyrun jetwash astros; do
+          for g in breakout skyrun jetwash astros jaywalk; do
             tmux new-session -d -s "soak_$g" -x 100 -y 24 \
               "env BREAKOUT747_STATE=$ST $PY games/$g.py --free --session soak$g 2>$LOG/$g.err"
           done
           sleep 60
           fail=0
-          for g in breakout skyrun jetwash astros; do
+          for g in breakout skyrun jetwash astros jaywalk; do
             if tmux has-session -t "soak_$g" 2>/dev/null && [ ! -s "$LOG/$g.err" ]; then
               echo "ok   $g: alive after 60 s, stderr empty"
             else
@@ -307,10 +307,10 @@ jobs:
             echo end > "$ST/state-soak$g"
           done
           sleep 2
-          for g in breakout skyrun jetwash astros; do tmux kill-session -t "soak_$g" 2>/dev/null || true; done
+          for g in breakout skyrun jetwash astros jaywalk; do tmux kill-session -t "soak_$g" 2>/dev/null || true; done
           exit $fail
 
-      - name: The picker offers all four titles at every geometry, in pure ASCII
+      - name: The picker offers every title at every geometry, in pure ASCII
         # 80x8 IS THE CASE THAT MATTERED and the one geometry the old step never
         # ran: at h=8 the menu's last row landed on row h-1, the same row the
         # "THE 747 LAB" tag writes to, and "[o] never ask" came out as
@@ -338,7 +338,7 @@ jobs:
           fail = []
           if [b for b in data if b > 127]:
               fail.append('non-ASCII bytes under 747_ASCII=1')
-          for t in ('BREAK-IN', 'SKYRUN', 'JETWASH', 'ASTROS', 'CHOOSE YOUR GAME'):
+          for t in ('BREAK-IN', 'SKYRUN', 'JETWASH', 'ASTROS', 'JAYWALK', 'CHOOSE YOUR GAME'):
               if t not in txt:
                   fail.append('picker never showed ' + t)
           if 'preview' in txt.lower():
@@ -397,6 +397,7 @@ jobs:
           route 2 SKYRUN747-   skyrun
           route 3 JETWASH747-  jetwash
           route 4 ASTROS747-   astros
+          route 5 JAYWALK747-  jaywalk
           exit $fail
 
       - name: Every title survives a live resize walk and still exits on 'end'
@@ -407,7 +408,7 @@ jobs:
           ST=/tmp/ci-resize; LOG=/tmp/ci-resizelog
           rm -rf "$ST" "$LOG"; mkdir -p "$ST" "$LOG"
           fail=0
-          for g in breakout skyrun jetwash astros; do
+          for g in breakout skyrun jetwash astros jaywalk; do
             s="rz_$g"; err="$LOG/$g.err"; : > "$err"
             tmux new-session -d -s "$s" -x 100 -y 24 \
               "env BREAKOUT747_STATE=$ST $PY games/$g.py --free --session rz$g 2>$err"

@@ -1431,6 +1431,7 @@ CATALOGUE = [
     ("skyrun",   "SKYRUN",   "POV space run {sep} 7 sectors, shoot craft, dodge rock"),
     ("jetwash",  "JETWASH",  "side-on sky runner {sep} one button, 7,470 m"),
     ("astros",   "ASTROS",   "invaders {sep} 7 waves, then the big one"),
+    ("jaywalk",  "JAYWALK",  "cross the road {sep} ride the river, fill all seven bays"),
 ]
 
 

@@ -4,7 +4,7 @@
 #   thinking (UserPromptSubmit) -> game runs; opens the pane if appropriate
 #   idle     (Stop)             -> game pauses
 #   end      (SessionEnd)       -> game exits, pane closes, state cleaned up
-#   toggle   (/breakin, /skyrun, /jetwash, /astros) -> open free-play pane / close it
+#   toggle   (/breakin, /skyrun, /jetwash, /astros, /jaywalk) -> open free-play pane / close it
 # Per-session state files keyed by session_id so parallel sessions never fight.
 set -u
 
@@ -20,7 +20,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && p
 # Every shipped title. This list IS the whitelist: the chosen title flows into a
 # file path and into a shell exec string, so it is never taken on trust — same
 # threat model as session_id below.
-GAMES="breakout skyrun jetwash astros"
+GAMES="breakout skyrun jetwash astros jaywalk"
 GAMES_RE="$(printf '%s' "$GAMES" | tr ' ' '|')"
 valid_game() { case " $GAMES " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
