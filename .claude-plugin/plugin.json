@@ -1,12 +1,12 @@
 {
   "name": "747-terminal-games",
-  "version": "0.2.0",
-  "description": "Play a game in your terminal while Claude thinks. Auto-pauses when Claude replies, resumes on your next prompt. Title #1: Breakout 747.",
+  "version": "2.0.0",
+  "description": "Play a game in your terminal while Claude thinks. Auto-pauses when Claude replies, resumes on your next prompt. Four titles: Break-In, Skyrun, Jetwash and Astros.",
   "author": {
     "name": "The 747 Lab"
   },
   "license": "MIT",
   "homepage": "https://github.com/The747Lab/747-terminal-games",
   "repository": "https://github.com/The747Lab/747-terminal-games",
-  "keywords": ["game", "terminal", "tui", "breakout", "claude-code", "idle", "fun"]
+  "keywords": ["game", "terminal", "tui", "break-in", "breakout", "skyrun", "jetwash", "astros", "claude-code", "idle", "fun"]
 }

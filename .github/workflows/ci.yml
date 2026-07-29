@@ -9,6 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.11", "3.13"]
     steps:
@@ -20,8 +21,158 @@ jobs:
       - name: Byte-compile the games
         run: python -m compileall -q games/
 
+      - name: No 3.10+ syntax (the floor is 3.9)
+        # compileall already rejects `match` when the matrix Python is 3.9, but not
+        # on 3.11/3.13 — the AST scan below catches it there. Runtime PEP-604 unions
+        # (`def f(x: int | None)`) parse everywhere and only blow up when the
+        # annotation is EVALUATED, which is at import time, so importing the module
+        # is the only check that actually proves the claim. Import is safe: every
+        # game does its real work behind `if __name__ == "__main__"`.
+        run: |
+          python - <<'PY'
+          import ast, importlib, pathlib, sys
+          sys.path.insert(0, 'games')
+          bad = []
+          for p in sorted(pathlib.Path('games').glob('*.py')):
+              for n in ast.walk(ast.parse(p.read_text())):
+                  if type(n).__name__ == 'Match':
+                      bad.append('%s: match statement (3.10+)' % p)
+              try:
+                  importlib.import_module(p.stem)
+                  print('ok  %-18s parses AND imports on %s' % (p, sys.version.split()[0]))
+              except SyntaxError as e:
+                  bad.append('%s: %s' % (p, e))
+              except TypeError as e:          # what an evaluated `int | None` raises on 3.9
+                  bad.append('%s: PEP-604 union evaluated at import: %s' % (p, e))
+          for b in bad:
+              print('FAIL', b)
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Shell syntax
         run: bash -n hooks/breakout-hook.sh
+
+      - name: A terminal with no colour degrades, it never crashes
+        # THE REGRESSION THIS CLOSES: on a terminal where start_color() failed,
+        # COLOR_PAIRS is 0 and CPython 3.10+ raises **ValueError** — not
+        # curses.error — out of BOTH init_pair() and color_pair(). Every guard
+        # in all four games caught only curses.error, so every title hard-crashed
+        # on launch on a mono terminal on 3.10-3.14 while passing on 3.9.
+        #
+        # This check is deliberately NOT a terminal test: it forces the exact
+        # exception at the exact call sites, so it fires on every Python in the
+        # matrix and on every OS, instead of depending on which terminfo entry
+        # the runner happens to ship.
+        run: |
+          python - <<'PY'
+          import curses, importlib, sys, traceback
+          sys.path.insert(0, 'games')
+
+          def boom(*a, **k):
+              raise ValueError("Color pair is greater than COLOR_PAIRS-1 (-1).")
+
+          curses.init_pair = boom
+          curses.color_pair = boom
+          curses.start_color = boom
+          curses.use_default_colors = boom
+          for attr in ('COLORS', 'COLOR_PAIRS'):
+              if hasattr(curses, attr):
+                  delattr(curses, attr)      # never DEFINED when start_color failed
+
+          fail = []
+          for name in ('breakout', 'skyrun', 'jetwash', 'astros'):
+              m = importlib.import_module(name)
+              try:
+                  p = m.Palette()
+                  n = len([k for k in vars(p) if not k.startswith('_')])
+                  print('ok   %-9s Palette() built %d roles with colour unavailable' % (name, n))
+              except Exception as e:
+                  fail.append('%s: %s: %s' % (name, type(e).__name__, e))
+                  traceback.print_exc()
+              for helper in ('cpair', 'ipair'):
+                  try:
+                      getattr(m, helper)(1, 2) if helper == 'ipair' else getattr(m, helper)(1)
+                  except Exception as e:
+                      fail.append('%s.%s raised %s' % (name, helper, type(e).__name__))
+          for f in fail:
+              print('FAIL', f)
+          sys.exit(1 if fail else 0)
+          PY
+
+      - name: On-screen text names shapes, never colours
+        # The MONO TEST is an acceptance gate: a teach line that says
+        # "shoot cyan · dodge red" renders verbatim on a pane with no cyan and
+        # no red. Teach text is built from the live glyph constants instead.
+        run: |
+          python - <<'PY'
+          import ast, os, re, sys
+          hues = re.compile(r'\b(red|cyan|green|gold|magenta|violet|yellow|blue|white|grey|gray)\b', re.I)
+          fail = []
+          for f in sorted(os.listdir('games')):
+              if not f.endswith('.py'):
+                  continue
+              tree = ast.parse(open(os.path.join('games', f)).read())
+              # real string LITERALS only, via the AST: a comment and a docstring
+              # never reach a terminal, and a grep cannot tell them apart.
+              docs = set()
+              for n in ast.walk(tree):
+                  if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                    ast.AsyncFunctionDef)):
+                      d = ast.get_docstring(n, clean=False)
+                      if d is not None:
+                          docs.add(d)
+              for n in ast.walk(tree):
+                  if not isinstance(n, ast.Constant) or not isinstance(n.value, str):
+                      continue
+                  s = n.value
+                  if s in docs or len(s) < 6 or ' ' not in s:
+                      continue
+                  if hues.search(s):
+                      fail.append('%s:%d names a colour on screen: %r'
+                                  % (f, n.lineno, s))
+          for f in fail:
+              print('FAIL', f)
+          if not fail:
+              print('ok   no on-screen string teaches the game by naming a hue')
+          sys.exit(1 if fail else 0)
+          PY
+
+      - name: One glyph family per role (the shape law, statically)
+        # A hazard wearing a pickup glyph was a shipped blocker: every rock in
+        # the mid band was drawn as a filled diamond, which is the PICKUP family.
+        # Assert the families stay disjoint so it cannot come back by constant.
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          sys.path.insert(0, 'games')
+          sky = importlib.import_module('skyrun')
+          fail = []
+          for mode in ('utf8', 'ascii'):
+              if mode == 'ascii':
+                  sky.use_ascii()
+              hazard = set(sky.RAMP) | {sky.BLOCK, sky.MIDBLOCK}
+              pickup = {sky.COIN_CH, sky.COIN_FAR, sky.POD_CH}
+              target = {sky.ALIEN_CH, sky.ARTIFACT_CH}
+              star = {sky.DOT}
+              for a, an, b, bn in ((hazard, 'HAZARD', pickup, 'PICKUP'),
+                                   (hazard, 'HAZARD', target, 'TARGET'),
+                                   (pickup, 'PICKUP', target, 'TARGET'),
+                                   (star, 'STAR', pickup, 'PICKUP'),
+                                   (star, 'STAR', target, 'TARGET')):
+                  both = a & b
+                  if both:
+                      fail.append('%s: %s and %s share %r' % (mode, an, bn, sorted(both)))
+              print('ok   %-5s HAZARD=%s PICKUP=%s TARGET=%s STAR=%s'
+                    % (mode, sorted(hazard), sorted(pickup), sorted(target), sorted(star)))
+          # STAR is inside the hazard ramp by construction (RAMP[0] == DOT); what
+          # matters is that nothing DRAWS a hazard as RAMP[0]. Guard that too.
+          src = open('games/skyrun.py').read()
+          if 'RAMP[max(1,' not in src:
+              fail.append('draw_rock no longer floors the shading ramp at index 1')
+          for f in fail:
+              print('FAIL', f)
+          sys.exit(1 if fail else 0)
+          PY
 
       - name: Manifests are valid JSON
         run: |
@@ -29,27 +180,291 @@ jobs:
           python -c "import json;json.load(open('.claude-plugin/marketplace.json'))"
           python -c "import json;json.load(open('hooks/hooks.json'))"
 
+      - name: hooks.json keeps its top-level "hooks" wrapper
+        # A flat schema loads as an empty hook set and the plugin silently does
+        # nothing — the worst possible failure, because everything still "works".
+        run: |
+          python - <<'PY'
+          import json, sys
+          h = json.load(open('hooks/hooks.json'))
+          assert set(h) == {'hooks'}, 'hooks.json must have exactly one top-level key: %s' % list(h)
+          for ev in ('UserPromptSubmit', 'Stop', 'SessionEnd'):
+              assert ev in h['hooks'], 'missing hook event: ' + ev
+          print('ok  hooks.json: top-level "hooks" wrapper present,', len(h['hooks']), 'events')
+          PY
+
       - name: Plugin and marketplace versions agree
         run: |
           python - <<'PY'
           import json, sys
           p = json.load(open('.claude-plugin/plugin.json'))['version']
           m = json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version']
-          print(f'plugin.json={p} marketplace.json={m}')
+          print('plugin.json=%s marketplace.json=%s' % (p, m))
           sys.exit(0 if p == m else 1)
           PY
 
-      - name: Games run headless and exit cleanly
+      - name: The line is wired end to end
+        # Every title on disk must appear in the picker, in the hook whitelist and
+        # in a slash command — and no display name may carry a "747" suffix.
+        run: |
+          python - <<'PY'
+          import os, re, sys
+          fail = []
+          disk = sorted(f[:-3] for f in os.listdir('games') if f.endswith('.py'))
+          src = open('games/breakout.py').read()
+          block = re.search(r'CATALOGUE = \[(.*?)^\]', src, re.S | re.M).group(1)
+          rows = re.findall(r'\(\s*"([a-z0-9_]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"\s*\)', block)
+          keys = [r[0] for r in rows]
+          wl = re.search(r'^GAMES="([^"]+)"', open('hooks/breakout-hook.sh').read(), re.M).group(1).split()
+          targets = {}
+          for f in sorted(os.listdir('commands')):
+              m = re.search(r'breakout-hook\.sh" toggle (\w+)', open(os.path.join('commands', f)).read())
+              if m:
+                  targets.setdefault(m.group(1), []).append(f)
+          print('on disk   :', disk)
+          print('picker    :', keys)
+          print('whitelist :', wl)
+          print('commands  :', {k: v for k, v in sorted(targets.items())})
+          if sorted(keys) != disk:
+              fail.append('picker CATALOGUE != games/ on disk')
+          if sorted(wl) != disk:
+              fail.append('hook GAMES whitelist != games/ on disk')
+          for k in disk:
+              if k not in targets:
+                  fail.append('no slash command opens "%s"' % k)
+          for key, name, blurb in rows:
+              if '747' in name:
+                  fail.append('display name carries a 747 suffix: %s' % name)
+              print('ok  %-9s %-9s %s' % (key, name, blurb))
+          if re.search(r'preview', src, re.I):
+              fail.append('the word "preview" is back in breakout.py')
+          for f in fail:
+              print('FAIL', f)
+          sys.exit(1 if fail else 0)
+          PY
+
+      - name: Every game launches, survives and honours the seamless contract
+        # Per title x geometry: comes up, stays up, exits promptly on 'end',
+        # removes its own state file, and writes nothing to stderr. The mono case
+        # runs colour-less + ASCII, which is where terminal-capability crashes hide.
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tmux
-          for g in breakout astros; do
-            tmux new-session -d -s "t_$g" -x 100 -y 24 \
-              "BREAKOUT747_STATE=/tmp/ci-state python3 games/$g.py --free --session ci"
-            sleep 3
-            tmux list-panes -t "t_$g" >/dev/null || { echo "$g died on launch"; exit 1; }
-            tmux kill-session -t "t_$g"
-            echo "$g: launched and ran"
+          PY=$(command -v python)
+          ST=/tmp/ci-state; LOG=/tmp/ci-logs
+          rm -rf "$ST" "$LOG"; mkdir -p "$ST" "$LOG"
+          fail=0
+          run_case() {   # run_case <game> <cols> <rows> <tag> [env assignments...]
+            local g="$1" cols="$2" rows="$3" tag="$4"; shift 4
+            local s="t_${g}_${tag}" err="$LOG/$g-$tag.err" i
+            : > "$err"; rm -f "$ST/state-$tag"
+            tmux new-session -d -s "$s" -x "$cols" -y "$rows" \
+              "env BREAKOUT747_STATE=$ST $* $PY games/$g.py --free --session $tag 2>$err"
+            sleep 4
+            if ! tmux has-session -t "$s" 2>/dev/null; then
+              echo "FAIL $g ${cols}x${rows} [$tag]: died on launch"; sed -n '1,25p' "$err"; fail=1; return
+            fi
+            echo end > "$ST/state-$tag"
+            for i in $(seq 1 40); do tmux has-session -t "$s" 2>/dev/null || break; sleep 0.1; done
+            if tmux has-session -t "$s" 2>/dev/null; then
+              echo "FAIL $g ${cols}x${rows} [$tag]: still alive 4s after 'end'"
+              tmux kill-session -t "$s"; fail=1; return
+            fi
+            if [ -s "$err" ]; then
+              echo "FAIL $g ${cols}x${rows} [$tag]: stderr not empty"; sed -n '1,25p' "$err"; fail=1; return
+            fi
+            if [ -e "$ST/state-$tag" ]; then
+              echo "FAIL $g ${cols}x${rows} [$tag]: left its state file behind"; fail=1; return
+            fi
+            echo "ok   $g ${cols}x${rows} [$tag]: launched, survived, exited on 'end', state cleaned, stderr empty"
+          }
+          for g in breakout skyrun jetwash astros; do
+            run_case "$g" 100 24 full
+            run_case "$g"  80  8 tiny
+            run_case "$g"  40 10 thin
+            run_case "$g"  90 26 mono TERM=vt100 747_ASCII=1
           done
+          exit $fail
+
+      - name: All four soak for 60 s side by side
+        # Long enough to cross the first wave / gate / chamber transition, where
+        # a geometry bug that a 4-second smoke test cannot reach tends to live.
+        run: |
+          PY=$(command -v python)
+          ST=/tmp/ci-soak; LOG=/tmp/ci-soaklog
+          rm -rf "$ST" "$LOG"; mkdir -p "$ST" "$LOG"
+          for g in breakout skyrun jetwash astros; do
+            tmux new-session -d -s "soak_$g" -x 100 -y 24 \
+              "env BREAKOUT747_STATE=$ST $PY games/$g.py --free --session soak$g 2>$LOG/$g.err"
+          done
+          sleep 60
+          fail=0
+          for g in breakout skyrun jetwash astros; do
+            if tmux has-session -t "soak_$g" 2>/dev/null && [ ! -s "$LOG/$g.err" ]; then
+              echo "ok   $g: alive after 60 s, stderr empty"
+            else
+              echo "FAIL $g: died or wrote to stderr during the soak"; sed -n '1,25p' "$LOG/$g.err"; fail=1
+            fi
+            echo end > "$ST/state-soak$g"
+          done
+          sleep 2
+          for g in breakout skyrun jetwash astros; do tmux kill-session -t "soak_$g" 2>/dev/null || true; done
+          exit $fail
+
+      - name: The picker offers all four titles at every geometry, in pure ASCII
+        # 80x8 IS THE CASE THAT MATTERED and the one geometry the old step never
+        # ran: at h=8 the menu's last row landed on row h-1, the same row the
+        # "THE 747 LAB" tag writes to, and "[o] never ask" came out as
+        # "THE 747 LAB r ask". A real tmux split lands at 80x8 more often than
+        # at 100x24, so one geometry was never enough.
+        run: |
+          PY=$(command -v python)
+          fail=0
+          pick_case() {   # pick_case <cols> <rows>
+            local cols="$1" rows="$2" ST=/tmp/ci-pick-$1x$2 out=/tmp/picker-$1x$2.txt
+            rm -rf "$ST"; mkdir -p "$ST"; echo thinking > "$ST/state-pick"
+            tmux new-session -d -s "pick$cols$rows" -x "$cols" -y "$rows" \
+              "env BREAKOUT747_STATE=$ST TERM=vt100 747_ASCII=1 $PY games/breakout.py --ask --session pick"
+            sleep 9
+            tmux capture-pane -p -t "pick$cols$rows" > "$out"
+            echo end > "$ST/state-pick"; sleep 1
+            tmux kill-session -t "pick$cols$rows" 2>/dev/null || true
+            echo "----- ${cols}x${rows} -----"; cat "$out"
+            COLS="$cols" ROWS="$rows" OUT="$out" python - <<'PY' || fail=1
+          import os, sys
+          out = os.environ['OUT']
+          cols, rows = os.environ['COLS'], os.environ['ROWS']
+          data = open(out, 'rb').read()
+          txt = data.decode('ascii', 'replace')
+          fail = []
+          if [b for b in data if b > 127]:
+              fail.append('non-ASCII bytes under 747_ASCII=1')
+          for t in ('BREAK-IN', 'SKYRUN', 'JETWASH', 'ASTROS', 'CHOOSE YOUR GAME'):
+              if t not in txt:
+                  fail.append('picker never showed ' + t)
+          if 'preview' in txt.lower():
+              fail.append('"preview" is on screen')
+          # the brand tag must never land on a row that carries menu text
+          for line in txt.splitlines():
+              if 'THE 747 LAB' in line and line.replace('THE 747 LAB', '').strip():
+                  fail.append('brand tag overwrote a menu row: %r' % line.strip())
+          # every option must survive whole, at every size
+          for opt in ('[a]', '[o]'):
+              if opt not in txt:
+                  fail.append('option %s is not reachable at %sx%s' % (opt, cols, rows))
+          for f in fail:
+              print('FAIL %sx%s %s' % (cols, rows, f))
+          if not fail:
+              print('ok   picker %sx%s: four titles, all options whole, tag on its own row'
+                    % (cols, rows))
+          sys.exit(1 if fail else 0)
+          PY
+          }
+          pick_case 100 24
+          pick_case  80  9
+          pick_case  80  8
+          pick_case  62 20
+          exit $fail
+
+      - name: The picker actually launches what you pick
+        # Routing was never exercised: the old step drew the menu and pressed
+        # nothing, and the launch matrix only ever ran --free, which skips the
+        # flyby and the picker entirely.
+        run: |
+          PY=$(command -v python)
+          fail=0
+          route() {   # route <key> <expected-title-prefix> <expected-game-key>
+            local key="$1" want="$2" gk="$3" ST=/tmp/ci-route-$3
+            rm -rf "$ST"; mkdir -p "$ST"; echo thinking > "$ST/state-r$gk"
+            tmux new-session -d -s "r$gk" -x 100 -y 24 \
+              "env BREAKOUT747_STATE=$ST TERM=vt100 747_ASCII=1 $PY games/breakout.py --ask --session r$gk"
+            sleep 9
+            tmux send-keys -t "r$gk" "$key"
+            sleep 5
+            local title got
+            title=$(tmux list-panes -t "r$gk" -F '#{pane_title}' | head -1)
+            got=$(cat "$ST/game" 2>/dev/null | tr -d '[:space:]')
+            echo end > "$ST/state-r$gk"
+            for i in $(seq 1 40); do tmux has-session -t "r$gk" 2>/dev/null || break; sleep 0.1; done
+            tmux kill-session -t "r$gk" 2>/dev/null || true
+            if [ "${title#$want}" = "$title" ] || [ "$got" != "$gk" ]; then
+              echo "FAIL key '$key': pane title [$title] want [$want*], remembered [$got] want [$gk]"
+              fail=1
+            else
+              echo "ok   key '$key' -> pane [$title], remembered [$got]"
+            fi
+          }
+          route 1 BREAKOUT747- breakout
+          route 2 SKYRUN747-   skyrun
+          route 3 JETWASH747-  jetwash
+          route 4 ASTROS747-   astros
+          exit $fail
+
+      - name: Every title survives a live resize walk and still exits on 'end'
+        # A live ghost cycle resizes the pane 3+ times; nothing in CI exercised
+        # that path. 100x24 -> 80x8 -> 30x6 (under the floor) -> 120x40 -> back.
+        run: |
+          PY=$(command -v python)
+          ST=/tmp/ci-resize; LOG=/tmp/ci-resizelog
+          rm -rf "$ST" "$LOG"; mkdir -p "$ST" "$LOG"
+          fail=0
+          for g in breakout skyrun jetwash astros; do
+            s="rz_$g"; err="$LOG/$g.err"; : > "$err"
+            tmux new-session -d -s "$s" -x 100 -y 24 \
+              "env BREAKOUT747_STATE=$ST $PY games/$g.py --free --session rz$g 2>$err"
+            sleep 3
+            for geo in "80 8" "30 6" "120 40" "100 24"; do
+              set -- $geo
+              tmux resize-window -t "$s" -x "$1" -y "$2" 2>/dev/null || \
+                tmux kill-session -t "$s" 2>/dev/null
+              sleep 2
+              if ! tmux has-session -t "$s" 2>/dev/null; then
+                echo "FAIL $g: died at ${1}x${2}"; sed -n '1,25p' "$err"; fail=1; break
+              fi
+            done
+            tmux has-session -t "$s" 2>/dev/null || continue
+            echo end > "$ST/state-rz$g"
+            for i in $(seq 1 40); do tmux has-session -t "$s" 2>/dev/null || break; sleep 0.1; done
+            if tmux has-session -t "$s" 2>/dev/null; then
+              echo "FAIL $g: still alive 4s after 'end' following a resize walk"
+              tmux kill-session -t "$s"; fail=1; continue
+            fi
+            if [ -s "$err" ]; then
+              echo "FAIL $g: stderr not empty after the resize walk"; sed -n '1,25p' "$err"; fail=1; continue
+            fi
+            echo "ok   $g: survived 100x24 -> 80x8 -> 30x6 -> 120x40 -> 100x24, exited on 'end'"
+          done
+          exit $fail
+
+      - name: The plugin installs under a path containing an apostrophe
+        # $STATE_DIR and $GAME were interpolated inside single quotes into the
+        # string handed to `tmux split-window`, so one apostrophe in the install
+        # path broke the quoting and the split failed with no error, no fallback
+        # and no message. A/B against a plain path so the test proves the cause.
+        run: |
+          PY=$(command -v python)
+          fail=0
+          install_case() {   # install_case <root> <label>
+            local root="$1" lbl="$2" st="/tmp/ci-ap-$2" sock="ap$2"
+            rm -rf "$root" "$st"; mkdir -p "$root" "$st"
+            cp -R games hooks "$root/"
+            tmux -L "$sock" new-session -d -s h -x 100 -y 30 "sleep 60"
+            local pane; pane=$(tmux -L "$sock" list-panes -t h -F '#{pane_id}' | head -1)
+            tmux -L "$sock" run-shell -t "$pane" \
+              "env CLAUDE_CODE_SESSION_ID=ci$lbl BREAKOUT747_STATE=$(printf '%q' "$st") CLAUDE_PLUGIN_ROOT=$(printf '%q' "$root") bash $(printf '%q' "$root/hooks/breakout-hook.sh") toggle breakout"
+            sleep 4
+            local titles; titles=$(tmux -L "$sock" list-panes -a -F '#{pane_title}' | tr '\n' ' ')
+            local proc; proc=$(pgrep -f "breakout\.py.*--session ci$lbl" | tr '\n' ' ')
+            pkill -f "breakout\.py.*--session ci$lbl" 2>/dev/null || true
+            tmux -L "$sock" kill-server 2>/dev/null || true
+            if [ -z "$proc" ]; then
+              echo "FAIL [$lbl] root=$root : nothing opened. panes=[$titles]"; fail=1
+            else
+              echo "ok   [$lbl] root=$root : pane opened, game running [$proc]"
+            fi
+          }
+          install_case "/tmp/ci-plain/plugin" plain
+          install_case "/tmp/ci-quote/O'Brien/plugin" apos
+          exit $fail
 
       - name: No network calls in shipped code
         run: |
