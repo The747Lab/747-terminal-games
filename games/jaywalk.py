@@ -46,6 +46,8 @@ ROAD_LANES = 4        # four lanes of traffic. The 4.
 RIVER_LANES = 3       # ...and the river completes the second 7 (4 + 3).
 START_LIVES = 3
 STEP_COOLDOWN = 0.07  # hop rate limit: a held key must not teleport you
+BAY_POP = 0.42        # landing celebration: long enough to SEE, short enough to
+                      # never delay the next hop. 0.1s reads as a render glitch.
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +119,13 @@ def use_ascii():
 
 
 def ascii_wanted():
+    """ASCII when the terminal cannot encode UTF-8, or when forced for the mono
+    test. `747_ASCII=1 python3 ...` is not a legal shell assignment prefix (a
+    POSIX name may not start with a digit), so only `env 747_ASCII=1 ...` works —
+    honour the documented name AND a shell-settable alias, exactly as the rest of
+    the line does, or jaywalk is the one title the mono gate cannot drive."""
+    if os.environ.get("747_ASCII") == "1" or os.environ.get("LAB747_ASCII") == "1":
+        return True
     enc = (os.environ.get("LC_ALL") or os.environ.get("LC_CTYPE")
            or os.environ.get("LANG") or "")
     return "utf" not in enc.lower()
@@ -125,7 +134,10 @@ def ascii_wanted():
 def txt(s):
     if UTF:
         return s
-    for a, b in (("·", "-"), ("×", "x"), ("—", "-"), ("▸", ">")):
+    # ↑ was missing, so the HUD key hint shipped a multibyte glyph into a pane
+    # that had just declared it cannot encode one — the one non-ASCII byte left
+    # on screen under 747_ASCII=1.
+    for a, b in (("·", "-"), ("×", "x"), ("—", "-"), ("▸", ">"), ("↑", "^")):
         s = s.replace(a, b)
     return s
 
@@ -202,6 +214,7 @@ class Palette(object):
         except Exception:
             n = 0
         self._cache = {}
+        self._floor = {}        # bg -> a pair that at least keeps that surface
         self._next = 1
         try:
             self._max = curses.COLOR_PAIRS - 1
@@ -232,10 +245,29 @@ class Palette(object):
                           bay_empty=C_)
         else:
             self.C = dict((k, -1) for k in keys)
+        self.reserve_surfaces()
+
+    def reserve_surfaces(self):
+        """Claim ONE PAIR PER SURFACE before anything else asks for a pair.
+
+        The pair table is a fixed-size resource, and the old exhaustion path
+        returned A_NORMAL — which paints the cell on the TERMINAL'S DEFAULT
+        background. On a dark terminal that is a black hole punched through the
+        board: the wash survives (its pair was cached early) while the actor on
+        top of it loses its floor, and the eye reads that as residue, not as a
+        thing. Registering every surface first guarantees there is always a wash
+        pair to fall back TO, so the worst case is an actor that loses its own
+        hue on top of the right floor — never a cell with no floor at all."""
+        for role in ("land", "water", "road", "hud", "log"):
+            bg = self.C.get(role)
+            if bg is None or bg < 0:
+                continue
+            self._floor[bg] = self.pair(self.C["hud_fg"], bg)
 
     def pair(self, fg, bg=-1):
-        """fg-on-bg colour attr, cached. Degrades to A_NORMAL when colour is
-        unavailable or the pair table is exhausted — never a crash."""
+        """fg-on-bg colour attr, cached. Degrades gracefully when colour is
+        unavailable or the pair table is exhausted — never a crash, and never a
+        cell that silently loses its background wash."""
         if not self.has_color or fg is None or fg < 0:
             return curses.A_NORMAL
         if bg is None or bg < 0:
@@ -245,7 +277,8 @@ class Palette(object):
         if got is not None:
             return got
         if self._next > self._max:
-            return curses.A_NORMAL
+            # KEEP THE FLOOR, LOSE ONLY THE HUE.
+            return self._floor.get(bg, curses.A_NORMAL)
         idx = self._next
         self._next += 1
         ipair(idx, fg, bg)
@@ -312,7 +345,10 @@ class Game(object):
         self.die_t = 0.0
         self.hop_cool = 0.0
         self.flash = 0
-        self.flash_bay = -1
+        self.bay_pop = 0.0        # seconds left on a landing celebration
+        self.bay_pop_i = -1
+        self.bay_pop_txt = ""
+        self.board_pulse = 0.0   # seconds left on the 747 full-board beat
         self.star_t = 0.0
         self.layout()
         self.build_lanes()
@@ -351,22 +387,75 @@ class Game(object):
         self.road_set = set(self.road_rows)
 
     def build_lanes(self):
+        """THE FROGGER RAMP, in three dials and one invariant.
+
+        The invariant first, because it was the actual bug: lane speed used to be
+        `base + 1.6 * i`, indexed off the ROW NUMBER. In a 22-row pane that is
+        thirteen road lanes, so the top lane ran at 24 cells/sec — the board got
+        harder the TALLER the terminal, which is not a difficulty curve, it is a
+        geometry accident. Speed now interpolates across the band as a FRACTION,
+        so an 80x8 split and a 110x30 pane play the same game.
+
+        And the fraction runs from the side you ENTER: road_rows[-1] is the lane
+        you step into off the curb and river_rows[-1] is the one you step onto off
+        the median, so both are frac 0 = slowest. The old indexing had the very
+        first lane you touched as the fastest on the board, which is why level 1
+        read as a coin-flip instead of as a warm-up.
+
+        Then the three dials, per level: everything gets faster, road holes get
+        tighter, logs get shorter and further apart, and trucks get more common."""
         if self.small:
             self.lanes = []
             return
         rng = self.rng
         lv = self.level
         self.lanes = []
+        # 1. SPEED. Capped, or level 8 in a think-wait is unplayable rather than hard.
+        ramp = min(1.0 + 0.13 * (lv - 1), 1.85)
+        # 2. HOLES. Road gaps close; logs shorten and separate.
+        road_gap = max(7, 16 - 2 * lv)          # L1 14 -> L5 7, then held
+        log_size = max(4, 8 - (lv - 1))         # L1 8  -> L5 4, then held
+        log_gap = min(3 + (lv - 1), 8)          # L1 3  -> L6 8, then held
+        # 3. EXTRA HAZARD. Trucks are size-3 hazards; more of the road becomes
+        #    truck as the levels climb. Every 4th lane at L1, every 2nd by L4.
+        heavy_every = 4 if lv <= 1 else (3 if lv <= 3 else 2)
+        nrd = len(self.road_rows)
+        # 4. HOW MUCH OF THE ROAD IS LIVE. The board fills the pane, so a 30-row
+        #    terminal lays down THIRTEEN road rows — and putting traffic in all
+        #    thirteen is not a hard level, it is an unfair one: there is nowhere
+        #    to stand still. Every death in a 100-second instrumented run at
+        #    110x30 was a car, not once the river, and not one crossing completed
+        #    in 27 lives. Frogger's answer has always been a lane you can REST in.
+        #    So ROAD_LANES stops being a decorative constant and becomes the
+        #    number of LIVE lanes at level 1 — the "4" of 7-4-7, exactly as this
+        #    file already claimed at the top. The rest of the road is empty
+        #    asphalt: same charcoal wash, same dashes, no cars. Each level lights
+        #    one more lane until the whole road is live, which IS the extra
+        #    hazard lane the ramp wants — and on a short pane (80x8 has two road
+        #    rows) min() means nothing changes at all.
+        nact = max(1, min(nrd, ROAD_LANES + (lv - 1)))
+        if nact >= nrd:
+            live = set(range(nrd))
+        elif nact == 1:
+            live = set([nrd - 1])               # the one you step into off the curb
+        else:
+            live = set(int(round(k * (nrd - 1) / float(nact - 1)))
+                       for k in range(nact))
         for i, y in enumerate(self.road_rows):
-            heavy = (i % 3 == 2)
-            speed = (5.0 + 1.6 * i + 0.9 * (lv - 1)) * (1 if i % 2 == 0 else -1)
+            if i not in live:
+                continue                        # empty asphalt: a row you can rest on
+            frac = (nrd - 1 - i) / float(nrd - 1) if nrd > 1 else 0.0
+            heavy = (i % heavy_every == heavy_every - 1)
+            speed = (4.2 + 3.6 * frac) * ramp * (1 if i % 2 == 0 else -1)
             self.lanes.append(Lane(y, "road", speed,
-                                   gap=max(7, 15 - lv), size=3 if heavy else 2,
+                                   gap=road_gap, size=3 if heavy else 2,
                                    rng=rng))
+        nrv = len(self.river_rows)
         for i, y in enumerate(self.river_rows):
-            speed = (3.5 + 1.3 * i + 0.6 * (lv - 1)) * (1 if i % 2 else -1)
+            frac = (nrv - 1 - i) / float(nrv - 1) if nrv > 1 else 0.0
+            speed = (2.6 + 2.4 * frac) * ramp * (1 if i % 2 else -1)
             self.lanes.append(Lane(y, "river", speed,
-                                   gap=max(5, 10 - lv // 2), size=max(4, 6 - lv // 3),
+                                   gap=log_gap, size=log_size,
                                    rng=rng))
         self.lane_by_y = dict((l.y, l) for l in self.lanes)
         self.build_water_field()
@@ -426,8 +515,13 @@ class Game(object):
                 self.score += gain
                 self.msg = txt("BAY %d/%d  +%d" % (sum(self.bays), BAYS, gain))
                 self.msg_t = 1.4
-                self.flash = 3
-                self.flash_bay = i
+                # LANDING JUICE. The bay itself pulses, the score flies off it,
+                # and the hidden 747 additionally strobes the whole board.
+                self.bay_pop = BAY_POP
+                self.bay_pop_i = i
+                self.bay_pop_txt = txt("+%d" % gain)
+                if i == mid:
+                    self.board_pulse = BAY_POP
                 if all(self.bays):
                     self.level += 1
                     self.bays = [False] * BAYS
@@ -435,6 +529,7 @@ class Game(object):
                     self.score += 500
                     self.msg = txt("ROAD %d CLEARED  +500" % (self.level - 1))
                     self.msg_t = 1.8
+                    self.board_pulse = BAY_POP   # the biggest beat gets the beat
                     self.build_lanes()
                 self.reset_frog()
                 return
@@ -455,6 +550,10 @@ class Game(object):
             self.msg_t -= dt
         if self.flash > 0:
             self.flash -= 1
+        if self.bay_pop > 0.0:
+            self.bay_pop = max(0.0, self.bay_pop - dt)
+        if self.board_pulse > 0.0:
+            self.board_pulse = max(0.0, self.board_pulse - dt)
         if self.hop_cool > 0.0:
             self.hop_cool -= dt
         self.star_t += dt
@@ -498,6 +597,9 @@ class Game(object):
         kill the player for time they could not see."""
         self.die_t = max(self.die_t, 0.0)
         self.hop_cool = 0.0
+        # a celebration nobody could see must not strobe on the way back in
+        self.bay_pop = 0.0
+        self.board_pulse = 0.0
 
     def commit_stats(self):
         b = self.best
@@ -521,6 +623,23 @@ class Game(object):
             return C["hud"]
         return C["land"]
 
+    def zpair(self, y, fg, extra=0):
+        """The ONE way a board actor gets an attribute: hue on top of whatever
+        that row is MADE OF. Every draw_* below routes through this, so "no cell
+        ever loses its wash" is a property of the code and not a property of
+        twenty individual call sites remembering to pass a background."""
+        return self.pal.pair(fg, self.zone_bg(y)) | extra
+
+    def pulse_attr(self):
+        """THE 747 BEAT. Landing the gold centre bay strobes the WHOLE board —
+        the same full-field flash Breakout fires on a 747 brick. Reverse video
+        does it, which means it costs no new hue (the reserved gold stays spent
+        only on the bay itself) and it lands identically on 256 colours and on a
+        terminal with none. Three hard 60ms strobes, then gone."""
+        if self.board_pulse <= 0.0:
+            return 0
+        return curses.A_REVERSE if int(self.board_pulse * 15.0) % 2 else 0
+
     def draw(self, playing):
         scr = self.scr
         scr.erase()
@@ -542,6 +661,7 @@ class Game(object):
         self.draw_lanes()
         self.draw_bays()
         self.draw_player()
+        self.draw_pop()
         # 4. HUD + pause overlay.
         self.hud(playing)
         if not playing:
@@ -551,8 +671,8 @@ class Game(object):
     def draw_banks(self):
         """Sparse grass tufts on the safe green banks — texture, not a field."""
         C = self.pal.C
-        at = self.pal.pair(C["land_hi"], C["land"])
         for y in (self.bay_y, self.median_y, self.curb_y):
+            at = self.zpair(y, C["land_hi"])
             r = random.Random((hash(("jw-grass", y)) & 0x7fffffff))
             for x in range(self.w):
                 if r.random() > 0.86:
@@ -561,9 +681,9 @@ class Game(object):
     def draw_water(self):
         """Dim ripples + rare bright crests, drifting in each lane's current."""
         C = self.pal.C
-        a_dim = self.pal.pair(C["water_g"], C["water"])
-        a_hi = self.pal.pair(C["water_hi"], C["water"]) | curses.A_BOLD
         for y in self.river_rows:
+            a_dim = self.zpair(y, C["water_g"])
+            a_hi = self.zpair(y, C["water_hi"], curses.A_BOLD)
             lane = self.lane_by_y.get(y)
             d = 1 if (lane and lane.speed > 0) else -1
             field = self.water_field.get(y)
@@ -581,8 +701,8 @@ class Game(object):
     def draw_road_marks(self):
         """Faint lane dashes, phase-shifted per row so they never column up."""
         C = self.pal.C
-        at = self.pal.pair(C["road_dash"], C["road"])
         for i, y in enumerate(self.road_rows):
+            at = self.zpair(y, C["road_dash"])
             for x in range((i * 3) % 8, self.w, 8):
                 self.put(y, x, DASH, at)
 
@@ -592,12 +712,12 @@ class Game(object):
             river = (l.kind == "river")
             heavy = l.size >= 3
             if river:
-                body_at = self.pal.pair(C["log"], C["water"])
-                hi_at = self.pal.pair(C["log_hi"], C["water"])   # quiet grain, not headlights
-                lo_at = self.pal.pair(C["log_lo"], C["water"])
+                body_at = self.zpair(l.y, C["log"])
+                hi_at = self.zpair(l.y, C["log_hi"])   # quiet grain, not headlights
+                lo_at = self.zpair(l.y, C["log_lo"])
             else:
                 col = C["truck"] if heavy else C["car"]
-                body_at = self.pal.pair(col, C["road"]) | curses.A_BOLD
+                body_at = self.zpair(l.y, col, curses.A_BOLD)
             for a, b in l.spans(self.w):
                 x0, x1 = int(a), int(b)
                 for x in range(x0, x1):
@@ -619,26 +739,57 @@ class Game(object):
 
     def draw_bays(self):
         C = self.pal.C
+        by = self.bay_y
         mid = BAYS // 2
+        # ~12Hz strobe over the life of the pop. int()%2 is the whole trick: it
+        # needs no frame counter, so it survives a variable dt and a ghost pane.
+        popping = self.bay_pop > 0.0
+        strobe = popping and (int(self.bay_pop * 24.0) % 2 == 1)
         for i, cx in enumerate(self.bay_cols()):
             full = self.bays[i]
-            flashing = (self.flash > 0 and self.flash_bay == i)
             if i == mid:
-                at = self.pal.pair(C["gold"], C["land"]) | curses.A_BOLD
+                at = self.zpair(by, C["gold"], curses.A_BOLD)
                 ch = BAY_FULL if full else BAY_EMPTY
                 if not full:                      # the 747 beckons — reserved gold halo
-                    g = self.pal.pair(C["gold"], C["land"]) | curses.A_DIM
-                    self.put(self.bay_y, cx - 1, GOLD_GLOW, g)
-                    self.put(self.bay_y, cx + 1, GOLD_GLOW, g)
+                    g = self.zpair(by, C["gold"], curses.A_DIM)
+                    self.put(by, cx - 1, GOLD_GLOW, g)
+                    self.put(by, cx + 1, GOLD_GLOW, g)
             elif full:
-                at = self.pal.pair(C["bay_done"], C["land"]) | curses.A_BOLD
+                at = self.zpair(by, C["bay_done"], curses.A_BOLD)
                 ch = BAY_FULL
             else:
-                at = self.pal.pair(C["bay_empty"], C["land"])   # visible open target
+                at = self.zpair(by, C["bay_empty"])   # visible open target
                 ch = BAY_EMPTY
-            if flashing:                          # 3-frame landing spark
-                at = self.pal.pair(C["hud_fg"], C["land"]) | curses.A_BOLD
-            self.put(self.bay_y, cx, ch, at)
+            if popping and i == self.bay_pop_i:
+                # THE BAY YOU JUST LANDED pulses for BAY_POP seconds. A_REVERSE
+                # carries the beat on a terminal with no colour at all, so the
+                # celebration is never colour-dependent.
+                at = self.zpair(by, C["hud_fg"], curses.A_BOLD)
+                if strobe:
+                    at |= curses.A_REVERSE
+                ch = BAY_FULL
+            self.put(by, cx, ch, at)
+
+    def draw_pop(self):
+        """The score flies off the bay you just filled. Bright + strobing, over
+        the water immediately below the bay, rising one row as it fades — the
+        arcade's oldest bit of feedback, and the cheapest."""
+        if self.bay_pop <= 0.0 or not self.bay_pop_txt:
+            return
+        cols = self.bay_cols()
+        i = self.bay_pop_i
+        if not (0 <= i < len(cols)):
+            return
+        s = self.bay_pop_txt
+        # rises toward the bay as the pop expires
+        y = self.bay_y + (1 if self.bay_pop < BAY_POP * 0.5 else 2)
+        y = min(max(self.bay_y + 1, y), self.curb_y)
+        hue = self.pal.C["gold"] if i == (BAYS // 2) else self.pal.C["player"]
+        at = self.zpair(y, hue, curses.A_BOLD)
+        if int(self.bay_pop * 24.0) % 2 == 1:
+            at |= curses.A_REVERSE
+        x = max(0, min(self.w - len(s), cols[i] - len(s) // 2))
+        self.put_str(y, x, s, at)
 
     def draw_player(self):
         """The one warm ember. Alive = Claude's orange, morphing like the spinner
@@ -666,19 +817,25 @@ class Game(object):
 
     def wash(self, y, bg):
         """Fill a whole row with a background colour — the material floor."""
-        at = self.pal.pair(self.pal.C["hud_fg"], bg)
         if not (0 <= y < self.h):
             return
-        # FULL width. Washing w-1 leaves a black column, and any row that skips
-        # the wash entirely reads as a TEAR in the board — my own colour render
-        # caught ragged black edges the glyph dump could not show.
+        at = self.pal.pair(self.pal.C["hud_fg"], bg) | self.pulse_attr()
+        # FULL width, in ONE call. hline() takes a chtype, writes exactly n cells,
+        # never advances the cursor and never wraps — so it fills column w-1 on
+        # row h-1 too, which is the one cell addstr() can never reach. The old
+        # addstr(w-1) + insch + put stack was three calls to say that, and the
+        # insch shifted the row it was supposed to be finishing.
         try:
+            self.scr.hline(y, 0, ord(" ") | at, self.w)
+            return
+        except (curses.error, ValueError, TypeError):
+            pass
+        try:                                   # belt and braces on an odd curses
             self.scr.addstr(y, 0, " " * max(0, self.w - 1), at)
             if self.w >= 1:
-                self.scr.insch(y, self.w - 1, " ", at)   # last cell, without scrolling
+                self.scr.insch(y, self.w - 1, " ", at)
         except curses.error:
             pass
-        self.put(y, self.w - 1, " ", at)
 
     def put(self, y, x, ch, at):
         if 0 <= y < self.h and 0 <= x < self.w:
@@ -724,7 +881,7 @@ class Game(object):
             m = self.msg[:max(0, self.w - 2)]
             gold_beat = ("747" in self.msg or "CLEAR" in self.msg)
             col = C["gold"] if gold_beat else C["player"]
-            ba = self.pal.pair(col, self.zone_bg(self.median_y)) | curses.A_BOLD
+            ba = self.zpair(self.median_y, col, curses.A_BOLD)
             self.put_str(self.median_y, max(0, (self.w - len(m)) // 2), m, ba)
 
     def put_str(self, y, x, s, at):
