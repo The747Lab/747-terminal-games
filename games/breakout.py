@@ -24,6 +24,11 @@ import sys
 import time
 
 STATE_DIR = os.environ.get("BREAKOUT747_STATE") or os.path.expanduser("~/.747-terminal-games")
+# Set once in __main__ (module scope, so no `global` needed), read by
+# back_to_menu(). It is the ONLY safe source of the flags THIS process was
+# launched with: game.manual_play is not it, because [space] toggles that, so a
+# paused-then-resumed run would hand the next title a --free it never had.
+LAUNCH_ARGS = None
 TICK = 0.033          # ~30 fps
 STATE_POLL = 0.2      # how often to re-read the state file while playing
 POLL_IDLE = 0.15      # ...and while ghosted. Must stay < 0.25 or session end hangs a pane.
@@ -1062,7 +1067,11 @@ def game_over_screen(scr, game, session):
     lines = ["CHAMBER %d REACHED %s BEST %d" % (game.chamber, G_SEP, best),
              "SCORE %d" % game.score,
              "",
-             "[r] play again %s [q] close" % G_SEP]
+             # [m] is only on the line when it is actually wired (see
+             # menu_available): an offered key that does nothing is worse than
+             # no key at all.
+             ("[r] play again %s [m] menu %s [q] close" % (G_SEP, G_SEP))
+             if menu_available() else "[r] play again %s [q] close" % G_SEP]
     dirty = True
     while True:
         if dirty:
@@ -1079,6 +1088,8 @@ def game_over_screen(scr, game, session):
         ch = scr.getch()
         if ch in (ord("r"), ord("R")):
             return True
+        if ch in (ord("m"), ord("M")) and menu_available():
+            back_to_menu(session)                 # never returns
         if ch in (ord("q"), ord("Q")):
             return False
         if ch != -1:
@@ -1543,12 +1554,24 @@ def remember_title(key):
     return key
 
 
-def launch_title(key, session):
+def launch_title(key, session, picker=False):
     """Hand off to another title in THIS pane — same process slot, so the ghost
-    pane / pause / resume contract keeps working exactly as before."""
+    pane / pause / resume contract keeps working exactly as before.
+
+    EVERY flag this process was launched with has to survive the trip, or the
+    handoff silently changes the next title's contract: a --free pane that
+    forgets --free starts obeying Claude's state and freezes on the first reply.
+    `picker` re-enters the menu directly, skipping the 7.47s intro."""
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, key + ".py")
-    argv = [sys.executable, path, "--session", session]
+    argv = [sys.executable, path]
+    if picker:
+        argv.append("--picker")
+    # --session stays ahead of any trailing flag: the hook's pgrep/pkill pattern
+    # is "<title>\.py.*--session <key>", and the pane it banishes is matched on it.
+    argv += ["--session", session]
+    if getattr(LAUNCH_ARGS, "free", False):
+        argv.append("--free")
     curses.endwin()
     # execv never returns, so __main__'s `finally` that turns mouse reporting back
     # off never runs. Titles that use no mouse at all (jetwash) would then inherit
@@ -1559,6 +1582,18 @@ def launch_title(key, session):
     except Exception:
         pass
     os.execv(sys.executable, argv)
+
+
+def menu_available():
+    """Only offer [m] when there is actually a menu to go back to. A one-title
+    install has nothing to choose between, and picker_screen short-circuits."""
+    return len(available_titles()) > 1
+
+
+def back_to_menu(session):
+    """[m] on the game-over screen: hand this pane back to the picker. Same
+    os.execv slot as any other title handoff — never returns."""
+    launch_title("breakout", session, picker=True)
 
 
 def ask_screen(scr, session):
@@ -1660,8 +1695,12 @@ def run(stdscr, args):
     except (curses.error, OSError):
         pass
 
-    if args.ask:
-        welcome_flyby(stdscr, args.session)
+    # --picker is the RETURNING player's door: straight to the menu, no flyby.
+    # Somebody who just finished a run has already sat through the 7.47s intro,
+    # and making them sit it again to switch games is the whole reason [m] exists.
+    if args.ask or args.picker:
+        if args.ask:
+            welcome_flyby(stdscr, args.session)
         pick = picker_screen(stdscr, args.session)
         if pick is None:
             return
@@ -1724,9 +1763,12 @@ def run(stdscr, args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--ask", action="store_true")
+    p.add_argument("--picker", action="store_true",
+                   help="go straight to the game menu, skipping the intro")
     p.add_argument("--free", action="store_true")
     p.add_argument("--session", default="")
     args = p.parse_args()
+    LAUNCH_ARGS = args          # module scope: back_to_menu()/launch_title() read it
     if ascii_wanted():
         use_ascii()
     os.makedirs(STATE_DIR, exist_ok=True)

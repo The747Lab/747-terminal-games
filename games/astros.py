@@ -23,6 +23,11 @@ import sys
 import time
 
 STATE_DIR = os.environ.get("BREAKOUT747_STATE") or os.path.expanduser("~/.747-terminal-games")
+# Set once in __main__ (module scope, so no `global` needed), read by
+# back_to_menu(). It is the ONLY safe source of the flags THIS process was
+# launched with: game.manual_play is not it, because [space] toggles that, so a
+# paused-then-resumed run would hand the picker a --free it never had.
+LAUNCH_ARGS = None
 TICK = 0.033          # ~30 fps render cadence
 STATE_POLL = 0.1      # re-read the state file 10x/s — playing AND idle (seamless contract)
 POLL_IDLE = 0.1       # sleep between idle polls: 'end' is honoured in <= ~0.2s
@@ -1310,15 +1315,60 @@ def ask_screen(scr, session):
     return False
 
 
+def menu_available():
+    """Only offer [m] when the picker is actually next to us. A single-title
+    install has no menu to go back to, and an offered key that does nothing is
+    worse than no key at all."""
+    return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "breakout.py"))
+
+
+def back_to_menu(session):
+    """[m] on the game-over screen: hand this pane back to the picker IN THIS
+    PROCESS SLOT (os.execv, the same handoff breakout.launch_title uses), so the
+    ghost-pane / pause / resume / OSC-title contract survives untouched.
+
+    --picker enters the menu directly: a player who just finished a run has
+    already sat through the 7.47s intro. Every launch flag travels with it —
+    dropping --free would make the next title obey Claude's state instead of
+    playing free, and --session keyed wrong orphans the pane from the hook.
+    Never returns."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    # --session stays ahead of any trailing flag: the hook's pgrep/pkill pattern
+    # is "<title>\.py.*--session <key>", and every pane it banishes is matched on it.
+    argv = [sys.executable, os.path.join(here, "breakout.py"), "--picker",
+            "--session", session]
+    if getattr(LAUNCH_ARGS, "free", False):
+        argv.append("--free")
+    try:
+        curses.endwin()
+    except curses.error:
+        pass
+    try:
+        sys.stdout.write("\033[?1003l")   # a leaked mouse mode outlives the pane
+        sys.stdout.flush()
+    except Exception:
+        pass
+    os.execv(sys.executable, argv)
+
+
 def game_over_screen(scr, game, session, st):
     best = max(st["best_score"], game.score)
     lines = ["GAME OVER " + G["sep"] + " WAVE %d" % min(game.wave, Game.WAVES),
              "",
              "SCORE %s      BEST %s" % ("{:,}".format(game.score), "{:,}".format(best)),
              "",
-             "[r] again " + G["sep"] + " [q] close"]
-    return _screen(scr, session, lines,
-                   [((ord("r"), ord("R")), "again"), ((ord("q"), ord("Q")), "quit")])
+             ("[r] again " + G["sep"] + " [m] menu " + G["sep"] + " [q] close")
+             if menu_available() else "[r] again " + G["sep"] + " [q] close"]
+    keys = [((ord("r"), ord("R")), "again"), ((ord("q"), ord("Q")), "quit")]
+    if menu_available():                     # never bind a key the build cannot honour
+        keys.insert(1, ((ord("m"), ord("M")), "menu"))
+    r = _screen(scr, session, lines, keys)
+    # Intercepted HERE, not in run(): back_to_menu never returns, so run()'s
+    # 'again'/'quit'/'end' contract stays exactly as it was.
+    if r == "menu":
+        back_to_menu(session)                # never returns
+    return r
 
 
 def victory_screen(scr, game, session, st):
@@ -1477,6 +1527,7 @@ if __name__ == "__main__":
     p.add_argument("--free", action="store_true")
     p.add_argument("--session", default="")
     args = p.parse_args()
+    LAUNCH_ARGS = args      # module scope: back_to_menu() reads it
     os.makedirs(STATE_DIR, exist_ok=True)
     use_ascii()
     # Session-keyed, like every other title: the hook matches this exact string

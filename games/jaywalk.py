@@ -32,6 +32,11 @@ import sys
 import time
 
 STATE_DIR = os.environ.get("BREAKOUT747_STATE") or os.path.expanduser("~/.747-terminal-games")
+# Set once in __main__ (module scope, so no `global` needed), read by
+# back_to_menu(). It is the ONLY safe source of the flags THIS process was
+# launched with: game.manual_play is not it, because [space] toggles that, so a
+# paused-then-resumed run would hand the picker a --free it never had.
+LAUNCH_ARGS = None
 TICK = 0.033          # ~30 fps
 STATE_POLL = 0.2      # how often to re-read the state file while playing
 POLL_IDLE = 0.15      # ...and while ghosted. Must stay < 0.25 or session end hangs a pane.
@@ -896,6 +901,43 @@ class Game(object):
         self.put_str(y, max(0, (self.w - len(s)) // 2), s, at)
 
 
+def menu_available():
+    """Only offer [m] when the picker is actually next to us. A single-title
+    install has no menu to go back to, and an offered key that does nothing is
+    worse than no key at all."""
+    return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "breakout.py"))
+
+
+def back_to_menu(session):
+    """[m] on the game-over screen: hand this pane back to the picker IN THIS
+    PROCESS SLOT (os.execv, the same handoff breakout.launch_title uses), so the
+    ghost-pane / pause / resume / OSC-title contract survives untouched.
+
+    --picker enters the menu directly: a player who just finished a run has
+    already sat through the 7.47s intro. Every launch flag travels with it —
+    dropping --free would make the next title obey Claude's state instead of
+    playing free, and --session keyed wrong orphans the pane from the hook.
+    Never returns."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    # --session stays ahead of any trailing flag: the hook's pgrep/pkill pattern
+    # is "<title>\.py.*--session <key>", and every pane it banishes is matched on it.
+    argv = [sys.executable, os.path.join(here, "breakout.py"), "--picker",
+            "--session", session]
+    if getattr(LAUNCH_ARGS, "free", False):
+        argv.append("--free")
+    try:
+        curses.endwin()
+    except curses.error:
+        pass
+    try:
+        sys.stdout.write("\033[?1003l")   # a leaked mouse mode outlives the pane
+        sys.stdout.flush()
+    except Exception:
+        pass
+    os.execv(sys.executable, argv)
+
+
 def game_over_screen(scr, game, session):
     scr.nodelay(False)
     scr.timeout(1000)
@@ -906,7 +948,8 @@ def game_over_screen(scr, game, session):
             txt("FLATTENED · %d" % game.score),
             txt("BEST %d · ROAD %d" % (max(game.best.get("best", 0), game.score), game.level)),
             "",
-            txt("[r] run it again   [q] close"),
+            txt("[r] run it again   [m] menu   [q] close") if menu_available()
+            else txt("[r] run it again   [q] close"),
         ]
         for i, ln in enumerate(lines):
             try:
@@ -921,6 +964,8 @@ def game_over_screen(scr, game, session):
             b["restarts"] = b.get("restarts", 0) + 1
             save_best(b)
             return True
+        if ch in (ord("m"), ord("M")) and menu_available():
+            back_to_menu(session)            # never returns
         if ch in (ord("q"), ord("Q"), 27):
             return False
         if read_state(session) == "end":
@@ -1006,6 +1051,7 @@ if __name__ == "__main__":
     p.add_argument("--free", action="store_true")
     p.add_argument("--session", default="")
     args = p.parse_args()
+    LAUNCH_ARGS = args      # module scope: back_to_menu() reads it
     if ascii_wanted():
         use_ascii()
     os.makedirs(STATE_DIR, exist_ok=True)
