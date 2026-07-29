@@ -8,10 +8,13 @@ When Claude Code is thinking, a game appears in a pane beside your work. It **pa
 
 ![First-run intro — a textmode fly-through](assets/747-intro.gif)
 
-## The four titles
+## The five titles
 
-The first time a game opens, you pick one. All four are finished games with a HUD, a
+The first time a game opens, you pick one. All five are finished games with a HUD, a
 scoring table, a win (or a depth) screen and a personal-best file — not demos.
+
+Every clip below is one continuous run, recorded at the size the pane actually opens at
+and played back at the speed it actually ran. Nothing is sped up and nothing is cut.
 
 ---
 
@@ -38,6 +41,8 @@ through the hole, and climb into the chamber above. Then you do it again. Foreve
 The cyan `▛▜` panels in the ceiling are the way out, and `BREACH ▰▱▱▱▱` says how close
 you are. Take a chamber without losing a life and your streak multiplies; every seventh
 chamber is a vault.
+
+![BREAK-IN — a recorded run: 1,100 points and a breach up into chamber 2](assets/breakin.gif)
 
 ---
 
@@ -67,6 +72,8 @@ every sector. Clear sector 7 and the run is complete — then keep flying in OVE
 `S 1/7` and the distance bar are on screen from the first frame, so you always know where
 the run ends. Three shields, no lives — the only way out is to run out of hull.
 
+![SKYRUN — a recorded run: half of sector 1 flown, coins grabbed, a full-height rock threaded](assets/skyrun.gif)
+
 ---
 
 ### JETWASH — *side-on sky runner*
@@ -95,6 +102,8 @@ Thrust *is* speed, so collecting it makes the run both faster and shorter.
 Every hazard is telegraphed more than a second before it reaches you, so a hit is always
 a decision you got wrong — never a surprise.
 
+![JETWASH — a recorded run: five gates, 4,400 points, and something big passing overhead](assets/jetwash.gif)
+
 ---
 
 ### ASTROS — *invaders*
@@ -122,6 +131,39 @@ divers in wave 5.
 The opening seconds teach the game by layout rather than by a tutorial box: one bomb
 falls, alone, into empty space, so you learn what `!` means before it can cost you.
 
+![ASTROS — a recorded run: wave 1 stripped to the last pair on an unbroken ×7 chain](assets/astros.gif)
+
+---
+
+### JAYWALK — *the crossing*
+
+Four lanes of traffic, three lanes of river, seven bays to fill. The road is a waiting
+game — stand still and let the gap come to you. The river is the opposite, because water
+is not a lane you can stand in: you ride whatever floats past, or you don't get across.
+
+```
+    ▒ ▒   ▽         ▽         ▽      ▒ ·▽·        ▽      ▒  ▽▒        ▽
+ ▄▄▄▄▄▄▄▄·  ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄  ·▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄  ·▄▄
+▄▄▄▄▄   ▄▄▄▄▄▄▄▄ ~~▄▄▄▄▄▄▄▄~  ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄  ·▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄
+▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄ · ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄
+▄▄▄▄▄▄▄ · ▄▄▄▄▄▄▄▄  ·▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄~  ▄▄▄▄▄▄▄▄  ~▄▄▄▄▄▄▄▄ ~ ▄▄▄▄▄▄▄▄   ▄▄▄▄
+▄▄   ▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄ · ▄▄▄▄▄▄▄▄  ·▄▄▄▄▄▄▄▄  ·▄▄▄▄▄▄▄▄   ▄▄▄▄▄▄▄▄·  ▄▄▄▄▄▄▄▄
+ ▒▒      ▒  ▒    ▒ ▒ ▒ ▒   ▒               ▒  ▒            ▒ ▒    ▒▒      ▒
+╌       ╌▬▶     ╌       ╌▬▶     ╌       ╌▬▶     ╌       ╌▬▶     ╌       ╌▬▶
+   ╌     ◀▬╌       ╌     ◀▬╌       ╌     ◀▬╌       ╌     ◀▬╌       ╌     ◀▬╌
+      ╌       ╌       ╌       ╌       ╌▌✷▐    ╌       ╌       ╌       ╌       ╌
+ ╌       ╌◀██    ╌       ╌ ◀██   ╌       ╌  ◀██  ╌       ╌   ◀██ ╌       ╌    ◀█
+▶   ╌       ╌  ▬▶   ╌       ╌  ▬▶   ╌       ╌  ▬▶   ╌       ╌  ▬▶   ╌       ╌  ▬
+      ▒▒▒       ▒  ▒               ▒        ▒   ▒   ▒          ▒ ▒
+ JAYWALK 80 ◆◆ ▽▽▽▽▽▽▽ R1                                 [↑] cross   [q] close
+```
+
+`▽▽▽▽▽▽▽` is the whole scoreboard: seven empty bays at the start, and closing the last one
+sends you back to the kerb with the traffic running faster. Nobody has ever had to be told
+what to do in this one, which is exactly why it is here.
+
+![JAYWALK — a recorded run: a bay filled, a log ridden, and two of the three lives spent getting there](assets/jaywalk.gif)
+
 ## Install (Claude Code plugin)
 
 ```
@@ -131,7 +173,7 @@ falls, alone, into empty space, so you learn what `!` means before it can cost y
 
 That's it. The next time Claude thinks, you'll be asked once whether you want to play —
 `y` to try it, `a` to auto-open every time, `o` to never ask. Say yes and the picker
-comes up: choose a title with `1`–`4` or the arrow keys. Your choice is remembered.
+comes up: choose a title with `1`–`5` or the arrow keys. Your choice is remembered.
 
 ## Play
 
@@ -144,10 +186,11 @@ comes up: choose a title with `1`–`4` or the arrow keys. Your choice is rememb
 | **SKYRUN** | `←` `→` `↑` `↓` (or `w` `a` `s` `d`), or the mouse — steer. `space` — fire. `v` — chase camera (needs 13+ rows). `p` — keep flying. |
 | **JETWASH** | `↑` / `space` / `w` — jump. `↓` / `s` — slam. Two buttons, no mouse. |
 | **ASTROS** | `←` `→` (or `a` / `d`), or the mouse — move. `space` — fire. |
+| **JAYWALK** | `↑` `↓` `←` `→` (or `w` `a` `s` `d`) — hop, one cell at a time. `space` — keep playing while Claude is idle. `r` on the end screen — run it again. |
 
 **Slash commands** open a free-play round any time, ignoring Claude's state:
-`/breakin` · `/skyrun` · `/jetwash` · `/astros` — and `/breakout` still works as an alias
-for `/breakin`.
+`/breakin` · `/skyrun` · `/jetwash` · `/astros` · `/jaywalk` — and `/breakout` still works
+as an alias for `/breakin`.
 
 ## Requirements
 
