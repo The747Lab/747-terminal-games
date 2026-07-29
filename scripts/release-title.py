@@ -818,7 +818,11 @@ def main():
     if not re.match(r"^[a-z0-9_]+$", key):
         print("RED  title key must match [a-z0-9_]+ (it becomes a file path and a shell word)")
         return 2
-    name = a.name or key.upper()
+    # An already-registered key keeps its CATALOGUE display name (breakout's
+    # menu row says BREAK-IN, not BREAKOUT) — key.upper() is only the default
+    # for a brand-new title.
+    registered = dict((k, n) for k, n, _ in catalogue_rows())
+    name = a.name or registered.get(key) or key.upper()
     if "747" in name:
         print("RED  display names carry NO 747 suffix — the 747 lives inside the game")
         return 2
